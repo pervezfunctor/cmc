@@ -12,7 +12,7 @@ ensure-line() {
     return
   fi
 
-  printf '%s\n' "$line" >> "$file"
+  printf '%s\n' "$line" >>"$file"
   echo "$name: added"
 }
 
@@ -30,7 +30,7 @@ uncomment-line() {
 
   local fixed
   fixed=$(sed "s|^[[:space:]]*#\{1,\}[[:space:]]*${line//\\/\\\\}.*|	$line|" "$file")
-  printf '%s\n' "$fixed" > "$file"
+  printf '%s\n' "$fixed" >"$file"
   echo "$name: enabled"
 }
 
