@@ -1,40 +1,52 @@
-#!/usr/bin/env nu
+#!/usr/bin/env bash
 
-def ensure-line [
-    file: path
-    line: string
-    name: string
-] {
-  if not ($file | path exists) {
-    print -e $"($name) ($file | path basename) not found, skipping"
+ensure-line() {
+  local file="$1" line="$2" name="$3"
+  if [[ ! -f "$file" ]]; then
+    echo "$name $(basename "$file") not found, skipping" >&2
     return
-  }
+  fi
 
-  let raw = (open --raw $file)
+  if grep -qxF "$line" "$file"; then
+    echo "$name: already configured"
+    return
+  fi
 
-  if ($raw | lines | any {|l| $l == $line }) {
-      print $"($name): already configured"
-      return
-  }
+  printf '%s\n' "$line" >> "$file"
+  echo "$name: added"
+}
 
-  ($raw
-  | lines
-  | append $line
-  | str join "\n"
-  ) | save -f $file
+uncomment-line() {
+  local file="$1" line="$2" name="$3"
+  if [[ ! -f "$file" ]]; then
+    echo "$name $(basename "$file") not found, skipping" >&2
+    return
+  fi
 
-  print $"($name): added"
+  if grep -qF "$line" "$file"; then
+    echo "$name: already enabled"
+    return
+  fi
+
+  local fixed
+  fixed=$(sed "s|^[[:space:]]*#\{1,\}[[:space:]]*${line//\\/\\\\}.*|	$line|" "$file")
+  printf '%s\n' "$fixed" > "$file"
+  echo "$name: enabled"
 }
 
 # Niri
-ensure-line ($env.HOME | path join ".config" "niri" "config.kdl") 'include "./cfg/custom.kdl"' "niri"
+ensure-line "$HOME/.config/niri/config.kdl" 'include "./cfg/custom.kdl"' "niri"
 
-print "Set locale to en_US"
+# Alacritty
+
+uncomment-line "$HOME/.config/alacritty/alacritty.toml" '"~/.config/alacritty/themes/noctalia.toml",' "alacritty noctalia theme"
+
+echo "Set locale to en_US"
 localectl set-locale en_US.UTF-8
 
-if ($env.USER == "pervez") {
-  print "git config"
+if [[ "$USER" == "pervez" ]]; then
+  echo "git config"
   git config --global user.name "Pervez Iqbal"
   git config --global user.email "pervezfunctor@gmail.com"
   git config --global init.defaultBranch main
-}
+fi
