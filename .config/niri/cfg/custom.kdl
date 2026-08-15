@@ -19,7 +19,7 @@ window-rule {
 
 binds {
   Mod+Space hotkey-overlay-title="Open App Launcher: noctalia launcher" {
-    spawn-sh "qs -c noctalia-shell ipc call launcher toggle";
+    spawn-sh "noctalia msg panel-toggle launcher";
   }
   Mod+d hotkey-overlay-title="Open App Launcher: fuzzel" {
     spawn "fuzzel";
