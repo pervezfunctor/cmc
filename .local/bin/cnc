@@ -26,6 +26,7 @@ trap error_handler ERR
 readonly REPO_NAME="cnc"
 readonly REPO_URL="https://github.com/pervezfunctor/${REPO_NAME}.git"
 readonly DOT_DIR="${HOME}/.${REPO_NAME}"
+readonly CUR_USER="${USER:-$(id -un)}"
 
 readonly LOG_DIR="${HOME}/.${REPO_NAME}-logs"
 readonly LOG_FILE="${LOG_DIR}/.${REPO_NAME}.log"
@@ -82,17 +83,6 @@ has_cmd() {
 
 cmd_check() {
   has_cmd "$1" || die "Command $1 not found. Quitting."
-}
-
-cmd_checks() {
-  local all_found=true
-  for cmd in "$@"; do
-    if ! has_cmd "$cmd"; then
-      warn "Command $cmd not found."
-      all_found=false
-    fi
-  done
-  $all_found || die "Some commands were not found."
 }
 
 system_update() {
@@ -207,9 +197,10 @@ docker_install() {
   si docker docker-compose
 
   log "Adding user to docker group"
-  sudo usermod -aG docker "$USER"
+  sudo usermod -aG docker "$CUR_USER"
 
   log "Installing lazydocker"
+  pixi_install
   pixi global install lazydocker
 }
 
@@ -224,8 +215,8 @@ incus_install() {
   si incus incus-tools incus-ui
 
   log "Adding user to incus groups"
-  sudo usermod -aG incus "$USER" || true
-  sudo usermod -aG incus-admin "$USER" || true
+  sudo usermod -aG incus "$CUR_USER" || true
+  sudo usermod -aG incus-admin "$CUR_USER" || true
 
   log "Enabling incus socket"
   sudo systemctl enable --now incus.socket || true
@@ -261,9 +252,10 @@ vp_install() {
 
   log "Installing vite plus..."
   curl -fsSL https://vite.plus | bash
+
+  log "Installing node..."
   export PATH="$HOME/.vite-plus/bin:$PATH"
   vp env install latest
-  vp install -g pnpm
 }
 
 nvim_astro() {
@@ -308,17 +300,25 @@ uv_install() {
 }
 
 ai_cli_install() {
-  log "Installing opencode"
-  curl -fsSL https://opencode.ai/install | bash
+  if ! has_cmd opencode; then
+    log "Installing opencode CLI"
+    curl -fsSL https://opencode.ai/install | bash
+  fi
 
-  log "Installing chatgpt cli"
-  curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
+  if ! has_cmd codex; then
+    log "Installing codex CLI"
+    curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
+  fi
 
-  log "Installing antigravity cli"
-  curl -fsSL https://antigravity.google/cli/install.sh | bash
+  if ! has_cmd agy; then
+    log "Installing antigravity CLI"
+    curl -fsSL https://antigravity.google/cli/install.sh | bash || true
+  fi
 
-  log "Installing claude"
-  curl -fsSL https://claude.ai/install.sh | bash
+  if ! has_cmd claude; then
+    log "Installing claude code CLI"
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
 }
 
 distrobox_install() {
@@ -373,7 +373,7 @@ libvirt_install() {
   log "Setting up libvirt"
 
   for group in libvirt qemu libvirt-qemu kvm; do
-    sudo usermod -aG "$group" "$USER" 2>/dev/null || true
+    sudo usermod -aG "$group" "$CUR_USER" 2>/dev/null || true
   done
 
   sudo systemctl enable --now libvirtd 2>/dev/null || true
@@ -384,8 +384,10 @@ libvirt_install() {
     sudo authselect enable-feature with-libvirt 2>/dev/null || true
   fi
 
-  echo 'firewall_backend = "iptables"' | sudo tee -a /etc/libvirt/network.conf
-  if has-cmd ufw && has_cmd systemd-detect-virt && [ "$(systemd-detect-virt)" = "none" ]; then
+  if ! grep -qs '^firewall_backend' /etc/libvirt/network.conf; then
+    echo 'firewall_backend = "iptables"' | sudo tee -a /etc/libvirt/network.conf >/dev/null
+  fi
+  if has_cmd ufw && has_cmd systemd-detect-virt && [ "$(systemd-detect-virt)" = "none" ]; then
     sudo ufw enable
     sudo ufw route allow from 192.168.122.0/24
   fi
@@ -393,9 +395,16 @@ libvirt_install() {
 
 ui_install() {
   log "Install ui packages..."
-  si fuzzel flatpak ttf-jetbrains-mono-nerd plocate fprintd \
-    matugen kimageformats cups-pk-helper ddcutil swayidle \
-    cachyos-samba-settings fuse2 gvfs gvfs-smb gvfs-nfs
+  local -a packages=(
+    fuzzel flatpak ttf-jetbrains-mono-nerd plocate fprintd matugen
+    kimageformats cups-pk-helper ddcutil swayidle fuse2 gvfs gvfs-smb
+    gvfs-nfs
+  )
+  si "${packages[@]}"
+
+  if is_cachy; then
+    si cachyos-samba-settings
+  fi
   # si apparmor apparmor.d
   # systemctl enable --now apparmor.service
 
@@ -413,11 +422,11 @@ shell_install() {
   system_update
 
   local -a packages=(
-    fish gcc git less make sed tar tmux tree duf eza unzip wget zip xh
-    zstd libatomic clang cmake gum entr gcc make pkgconf ninja fd yazi
+    fish gcc git less make sed tar tmux tree duf eza unzip wget zip
+    zstd libatomic clang cmake gum entr pkgconf ninja fd yazi xh
     nushell trash-cli starship fzf bat shfmt bottom difftastic direnv
     htop tmuxp imagemagick jq just lazygit rclone ripgrep rsync gdu
-    tealdeer tectonic television trash-cli zoxide github-cli python-yaml
+    tealdeer tectonic television zoxide github-cli python-yaml
   )
 
   log "Installing system packages..."
@@ -427,7 +436,7 @@ shell_install() {
   pixi_packages_install
 
   if ! is_cachy; then
-    sudo chsh -s "$(which fish)" "$USER" || true
+    sudo chsh -s "$(which fish)" "$CUR_USER" || true
   fi
 }
 
@@ -547,10 +556,25 @@ main() {
 }
 
 export PATH="$HOME/.pixi/bin:$PATH"
+
+OUT_PID=""
+ERR_PID=""
+
+finish_logs() {
+  local rc="$1"
+  exec 1>&- 2>&-
+  wait "${OUT_PID:-}" "${ERR_PID:-}" 2>/dev/null || true
+  exit "$rc"
+}
+
 init_logs
 has_cmd sed || si sed
 cmd_check sed
 
-exec > >(tee -a "$STD_LOG_FILE" | tee -a "$COMBINED_LOG_FILE") \
-2> >(tee -a "$ERR_LOG_FILE" | tee -a "$COMBINED_LOG_FILE" >&2)
+exec > >(tee -a "$STD_LOG_FILE" | tee -a "$COMBINED_LOG_FILE")
+OUT_PID=$!
+exec 2> >(tee -a "$ERR_LOG_FILE" | tee -a "$COMBINED_LOG_FILE" >&2)
+ERR_PID=$!
+
+trap 'finish_logs $?' EXIT
 main "$@"
